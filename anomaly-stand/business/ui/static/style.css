@@ -1,0 +1,28 @@
+:root { --bg:#f4f6fa; --card:#fff; --text:#1f2937; --muted:#6b7280; --accent:#2563eb; --danger:#dc2626; --ok:#16a34a; }
+* { box-sizing: border-box; }
+body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--text); }
+header { display:flex; align-items:center; gap:12px; padding:14px 24px; background:#111827; color:#fff; }
+header h1 { margin:0; font-size:20px; }
+header .sub { color:#9ca3af; font-size:13px; flex:1; }
+main { max-width:1000px; margin:20px auto; padding:0 16px; display:grid; gap:16px; }
+.card { background:var(--card); border-radius:10px; padding:16px 20px; box-shadow:0 1px 3px rgba(0,0,0,.08); }
+.card h2 { margin:0 12px 0 0; font-size:17px; }
+.row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:8px 0; }
+.pager { justify-content:center; }
+table { width:100%; border-collapse:collapse; font-size:14px; margin-top:8px; }
+th, td { text-align:left; padding:6px 8px; border-bottom:1px solid #e5e7eb; }
+th { color:var(--muted); font-weight:600; }
+input, select { padding:6px 8px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; }
+input.qty { width:60px; }
+button { padding:6px 12px; border:0; border-radius:6px; background:var(--accent); color:#fff; cursor:pointer; font-size:14px; }
+button:disabled { opacity:.4; cursor:default; }
+button.danger { background:var(--danger); }
+pre { background:#f9fafb; padding:10px; border-radius:6px; min-height:40px; font-size:13px; overflow:auto; }
+.grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:10px; }
+.grid label { display:flex; flex-direction:column; gap:4px; font-size:13px; color:var(--muted); }
+.chaos { border-left:4px solid var(--danger); }
+.hint, .muted { color:var(--muted); font-size:13px; }
+.badge { padding:4px 10px; border-radius:999px; font-size:12px; background:#374151; }
+.badge.ok { background:var(--ok); } .badge.bad { background:var(--danger); }
+#toast { position:fixed; bottom:20px; right:20px; padding:10px 16px; border-radius:8px; background:#111827; color:#fff; opacity:0; transition:opacity .2s; pointer-events:none; }
+#toast.show { opacity:1; } #toast.error { background:var(--danger); }

@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Demo Shop · Anomaly Stand</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>🛒 Demo Shop</h1>
+  <span class="sub">business layer of the anomaly detection stand</span>
+  <span id="health" class="badge">checking…</span>
+</header>
+
+<main>
+  <!-- Catalog -->
+  <section class="card">
+    <div class="row">
+      <h2>Catalog</h2>
+      <select id="category">
+        <option value="">All categories</option>
+        <option>books</option><option>electronics</option><option>home</option>
+        <option>toys</option><option>sport</option>
+      </select>
+      <button id="reload">Reload</button>
+    </div>
+    <table id="products">
+      <thead>
+        <tr><th>ID</th><th>Name</th><th>Category</th><th>Price</th><th>Stock</th><th>Qty</th><th></th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <div class="row pager">
+      <button id="prev">← Prev</button><span id="page"></span><button id="next">Next →</button>
+    </div>
+  </section>
+
+  <!-- Order lookup -->
+  <section class="card">
+    <h2>Order lookup</h2>
+    <div class="row">
+      <input id="orderId" placeholder="Order ID">
+      <button id="lookup">Find</button>
+    </div>
+    <pre id="orderResult"></pre>
+  </section>
+
+  <!-- Manual fault injection -->
+  <section class="card chaos">
+    <h2>Experiment controls (chaos)</h2>
+    <p class="hint">Manual anomaly injection. Unlike generator scenarios, these are <b>not</b> written to ground truth.</p>
+    <div class="grid">
+      <label>Extra latency, ms <input type="number" id="c_latency" value="0" min="0"></label>
+      <label>Jitter, ms <input type="number" id="c_jitter" value="0" min="0"></label>
+      <label>Error rate (0–1) <input type="number" id="c_error" value="0" min="0" max="1" step="0.05"></label>
+      <label>Payload multiplier <input type="number" id="c_payload" value="1" min="1" max="200"></label>
+      <label>Endpoint prefixes (comma-separated) <input id="c_endpoints" placeholder="/api/products"></label>
+      <label>Duration, s <input type="number" id="c_duration" value="120" min="1" max="3600"></label>
+    </div>
+    <div class="row">
+      <button id="chaosApply" class="danger">Apply</button>
+      <button id="chaosClear">Clear</button>
+      <span id="chaosStatus" class="muted"></span>
+    </div>
+  </section>
+</main>
+
+<div id="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>
