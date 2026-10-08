@@ -1,0 +1,85 @@
+# =============================================================================
+# Anomaly Detection Stand — Step 1: Business layer
+#   app               FastAPI "Demo Shop" (business logic + /metrics + chaos API)
+#   nginx             reverse proxy + static UI + JSON access logs (ML data source)
+#   traffic-generator synthetic users + scheduled operational anomalies
+#
+# NOT a production setup: no TLS, no auth, no log rotation.
+# Steps 2/3 (Prometheus, Grafana, ML) will join the same named network.
+# =============================================================================
+name: anomaly-stand
+
+services:
+  app:
+    build: ./business/api
+    image: anomaly-stand/demo-shop-api:1.0
+    container_name: demo-shop-api
+    environment:
+      PRODUCT_COUNT: ${PRODUCT_COUNT:-50}
+      SEED: ${SEED:-42}
+      LOG_LEVEL: ${APP_LOG_LEVEL:-INFO}
+    expose:
+      - "8000"                       # internal only; public traffic goes via nginx
+    healthcheck:
+      # Hits the app directly, so health checks never appear in nginx logs.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+    networks: [stand]
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: demo-shop-nginx
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "${NGINX_HTTP_PORT:-8080}:80"
+    volumes:
+      - ./business/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./business/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./business/ui:/usr/share/nginx/html:ro
+      # JSON access logs land on the host -> consumed by the ML pipeline (step 3)
+      - ./data/nginx-logs:/var/log/nginx
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks: [stand]
+
+  traffic-generator:
+    build: ./business/traffic-generator
+    image: anomaly-stand/traffic-generator:1.0
+    container_name: demo-shop-traffic
+    depends_on:
+      nginx:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+    environment:
+      TARGET_URL: http://nginx
+      CHAOS_URL: http://app:8000     # chaos control bypasses nginx (keeps ML data clean)
+      PRODUCT_COUNT: ${PRODUCT_COUNT:-50}
+      BASE_RPS: ${BASE_RPS:-8}
+      DAY_PERIOD_S: ${DAY_PERIOD_S:-3600}
+      DIURNAL_AMPLITUDE: ${DIURNAL_AMPLITUDE:-0.6}
+      WARMUP_S: ${WARMUP_S:-1800}
+      ANOMALIES_ENABLED: ${ANOMALIES_ENABLED:-true}
+      ANOMALY_MIN_GAP_S: ${ANOMALY_MIN_GAP_S:-300}
+      ANOMALY_MAX_GAP_S: ${ANOMALY_MAX_GAP_S:-900}
+      SCENARIOS: ${SCENARIOS:-traffic_spike,latency_degradation,error_burst,not_found_storm,heavy_payload}
+      GROUND_TRUTH_FILE: /data/ground_truth/anomalies.jsonl
+      LOG_LEVEL: ${GENERATOR_LOG_LEVEL:-INFO}
+    volumes:
+      - ./data/ground-truth:/data/ground_truth
+    restart: unless-stopped
+    networks: [stand]
+
+networks:
+  stand:
+    name: anomaly-stand-net          # fixed name so observability/ML stacks can attach
