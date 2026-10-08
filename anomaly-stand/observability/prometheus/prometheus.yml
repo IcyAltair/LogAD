@@ -1,0 +1,55 @@
+# Prometheus config for the anomaly-detection stand (step 2).
+# Short intervals on purpose: anomaly scenarios last 1-3 minutes.
+global:
+  scrape_interval: 5s
+  scrape_timeout: 4s
+  evaluation_interval: 5s
+  external_labels:
+    stand: anomaly-lab
+
+# Paths are relative to this file
+rule_files:
+  - rules/*.yml
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels: { layer: observability }
+
+  # ---- business layer (step 1) ----
+  - job_name: app                       # FastAPI app, prometheus_client /metrics
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["app:8000"]
+        labels: { layer: business }
+
+  - job_name: nginx                     # stub_status via nginx-prometheus-exporter
+    static_configs:
+      - targets: ["nginx-exporter:9113"]
+        labels: { layer: business }
+
+  # ---- observability layer (step 2) ----
+  - job_name: nginx-logs                # access log -> metrics (same source as the ML model)
+    static_configs:
+      - targets: ["nginx-log-exporter:9102"]
+        labels: { layer: observability }
+
+  - job_name: ground-truth              # injected anomaly windows (labels for evaluation)
+    static_configs:
+      - targets: ["gt-annotator:9103"]
+        labels: { layer: observability }
+
+  - job_name: grafana
+    static_configs:
+      - targets: ["grafana:3000"]
+        labels: { layer: observability }
+
+  # ---- extension point for step 3 ----
+  # Drop a *.yml file into prometheus/targets/ (see ml-detector.yml.example);
+  # Prometheus picks it up within 30s, no restart needed. The `job` label from
+  # the file overrides the job_name below.
+  - job_name: dynamic
+    file_sd_configs:
+      - files: ["targets/*.yml"]
+        refresh_interval: 30s

@@ -1,0 +1,55 @@
+# promtool unit tests: `make test-rules`
+rule_files:
+  - ../rules/recording.yml
+  - ../rules/alerts.yml
+
+evaluation_interval: 5s
+
+tests:
+  # error_burst: 10 rps of 200s, then +5 rps of 500s after 5 minutes
+  - interval: 5s
+    input_series:
+      - series: 'nginx_log_requests_total{job="nginx-logs",method="GET",route="/api/products",status="200",status_class="2xx"}'
+        values: '0+50x200'
+      - series: 'nginx_log_requests_total{job="nginx-logs",method="GET",route="/api/products",status="500",status_class="5xx"}'
+        values: '0x60 0+25x140'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: BaselineHighErrorRate
+        exp_alerts: []
+      - eval_time: 9m
+        alertname: BaselineHighErrorRate
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              detector: baseline
+              scenario_hint: error_burst
+            exp_annotations:
+              summary: "5xx ratio above 10%"
+              description: "5xx ratio is 33.33% over the last minute."
+    promql_expr_test:
+      - expr: stand:errors_5xx:ratio1m
+        eval_time: 4m
+        exp_samples:
+          - labels: 'stand:errors_5xx:ratio1m'
+            value: 0
+
+  # traffic_spike: 10 rps for 40 minutes, then 40 rps
+  - interval: 5s
+    input_series:
+      - series: 'nginx_log_requests_total{job="nginx-logs",method="GET",route="/",status="200",status_class="2xx"}'
+        values: '0+50x480 24200+200x60'
+    alert_rule_test:
+      - eval_time: 39m
+        alertname: BaselineTrafficSpike
+        exp_alerts: []
+      - eval_time: 43m
+        alertname: BaselineTrafficSpike
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              detector: baseline
+              scenario_hint: traffic_spike
+            exp_annotations:
+              summary: "Request rate is 2.5x above the 30m average"
+              description: "Current rate 40 rps."

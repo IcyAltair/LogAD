@@ -1,0 +1,10 @@
+apiVersion: 1
+providers:
+  - name: anomaly-stand
+    folder: Anomaly Stand
+    type: file
+    disableDeletion: true
+    allowUiUpdates: true       # edits in UI are allowed but NOT persisted to the JSON file
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards

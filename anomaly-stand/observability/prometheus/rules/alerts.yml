@@ -1,0 +1,97 @@
+# Two kinds of alerts:
+#  1) stand health (targets down, log pipeline stale/broken)
+#  2) BASELINE detectors: naive static/relative thresholds, one per anomaly
+#     scenario of step 1. They are the "dumb" reference the Isolation Forest
+#     (step 3) must beat. Label detector="baseline" distinguishes them from
+#     future detector="isolation_forest" alerts.
+groups:
+  - name: stand-health
+    rules:
+      - alert: StandTargetDown
+        expr: up == 0
+        for: 30s
+        labels:
+          severity: critical
+          detector: health
+        annotations:
+          summary: "Scrape target {{ $labels.job }} ({{ $labels.instance }}) is down"
+          description: "Prometheus cannot scrape {{ $labels.instance }} for 30s."
+
+      - alert: NginxLogExporterStale
+        expr: nginx_log_lag_seconds > 60
+        for: 1m
+        labels:
+          severity: warning
+          detector: health
+        annotations:
+          summary: "No new nginx access-log lines"
+          description: "Last log event is {{ $value | humanizeDuration }} old. Is the traffic-generator stopped?"
+
+      - alert: NginxLogParseErrors
+        expr: rate(nginx_log_parse_errors_total[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+          detector: health
+        annotations:
+          summary: "nginx-log-exporter cannot parse log lines"
+          description: "{{ $value | humanize }} lines/s fail to parse. Check log_format vs FIELD_* settings."
+
+  - name: stand-baseline-detectors
+    rules:
+      - alert: BaselineTrafficSpike
+        expr: |
+          stand:requests:rate1m > 2.5 * stand:requests:rate1m:avg30m
+          and stand:requests:rate1m > 2
+        for: 1m
+        labels:
+          severity: warning
+          detector: baseline
+          scenario_hint: traffic_spike
+        annotations:
+          summary: "Request rate is 2.5x above the 30m average"
+          description: "Current rate {{ $value | humanize }} rps."
+
+      - alert: BaselineHighLatencyP95
+        expr: stand:latency_p95_seconds:1m > 1
+        for: 1m
+        labels:
+          severity: warning
+          detector: baseline
+          scenario_hint: latency_degradation
+        annotations:
+          summary: "p95 latency above 1s"
+          description: "p95 request_time is {{ $value | humanizeDuration }}."
+
+      - alert: BaselineHighErrorRate
+        expr: stand:errors_5xx:ratio1m > 0.10 and on() stand:requests:rate1m > 0.5
+        for: 30s
+        labels:
+          severity: warning
+          detector: baseline
+          scenario_hint: error_burst
+        annotations:
+          summary: "5xx ratio above 10%"
+          description: "5xx ratio is {{ $value | humanizePercentage }} over the last minute."
+
+      - alert: BaselineNotFoundStorm
+        expr: stand:errors_4xx:ratio1m > 0.25 and on() stand:requests:rate1m > 0.5
+        for: 1m
+        labels:
+          severity: warning
+          detector: baseline
+          scenario_hint: not_found_storm
+        annotations:
+          summary: "4xx ratio above 25%"
+          description: "4xx ratio is {{ $value | humanizePercentage }} over the last minute."
+
+      - alert: BaselineHeavyPayload
+        expr: stand:response_size_bytes:avg1m > 5 * stand:response_size_bytes:avg1m:avg30m
+        for: 1m
+        labels:
+          severity: warning
+          detector: baseline
+          scenario_hint: heavy_payload
+        annotations:
+          summary: "Average response size is 5x above the 30m average"
+          description: "Average body_bytes_sent is {{ $value | humanize1024 }}B."

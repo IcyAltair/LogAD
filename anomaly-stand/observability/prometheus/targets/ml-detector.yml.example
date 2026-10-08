@@ -1,0 +1,5 @@
+# Step 3: rename to ml-detector.yml to start scraping the Isolation Forest detector.
+- targets: ["ml-detector:9200"]
+  labels:
+    job: ml-detector
+    layer: ml

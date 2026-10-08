@@ -1,0 +1,149 @@
+# =============================================================================
+# Anomaly-detection stand — STEP 2: observability layer
+#
+# Runs as a separate compose project that attaches to the network created by
+# the business layer (step 1). Start step 1 first, then:
+#     docker compose -f observability/docker-compose.yml up -d --build
+#
+# Components:
+#   prometheus          metrics TSDB + recording rules (features) + baseline alerts
+#   grafana             dashboards, ground-truth annotations, plugin dir for step 3
+#   nginx-exporter      nginx stub_status  -> Prometheus (connections, total req)
+#   nginx-log-exporter  nginx JSON access log -> Prometheus (status/route/latency/bytes)
+#   gt-annotator        data/ground-truth/anomalies.jsonl -> Grafana annotations + metrics
+# NOT a production setup: no TLS, default credentials, anonymous viewer access.
+# =============================================================================
+name: anomaly-stand-observability
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+networks:
+  stand:
+    name: anomaly-stand-net      # created by step-1 compose (fixed name)
+    external: true
+
+volumes:
+  prometheus-data:
+  grafana-data:
+
+services:
+  prometheus:
+    image: prom/prometheus:${PROMETHEUS_VERSION:-v2.55.1}
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-7d}
+      - --web.enable-lifecycle          # POST /-/reload after editing rules
+      - --web.enable-admin-api          # TSDB snapshots for offline ML datasets (non-PROD!)
+    volumes:
+      - ./prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/-/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks: [stand]
+    logging: *default-logging
+
+  grafana:
+    image: grafana/grafana-oss:${GRAFANA_VERSION:-11.6.0}
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"          # read-only access without login (stand only)
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/stand/business-overview.json
+      # Step 3 will put the custom anomaly panel plugin id here (unsigned, dev build)
+      GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS: ${GRAFANA_UNSIGNED_PLUGINS:-}
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./grafana/plugins:/var/lib/grafana/plugins     # step 3: custom plugin build goes here
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+    networks: [stand]
+    logging: *default-logging
+
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:${NGINX_EXPORTER_VERSION:-1.3.0}
+    command:
+      - --nginx.scrape-uri=${NGINX_STUB_STATUS_URL:-http://nginx:8081/stub_status}
+    restart: unless-stopped
+    networks: [stand]
+    logging: *default-logging
+
+  nginx-log-exporter:
+    build: ./exporters
+    image: anomaly-stand-obs-exporters:local
+    command: ["python", "nginx_log_exporter.py"]
+    environment:
+      LOG_PATH: /logs/access.json.log
+      EXPORTER_PORT: "9102"
+      LOG_START_AT: ${LOG_START_AT:-end}        # end | beginning
+      MAX_ROUTES: ${MAX_ROUTES:-40}
+      KNOWN_ROUTES: ${KNOWN_ROUTES:-}
+      LOG_LEVEL: ${EXPORTER_LOG_LEVEL:-INFO}
+      FIELD_TIME: ${FIELD_TIME:-}
+      FIELD_STATUS: ${FIELD_STATUS:-}
+      FIELD_METHOD: ${FIELD_METHOD:-}
+      FIELD_URI: ${FIELD_URI:-}
+      FIELD_REQUEST_TIME: ${FIELD_REQUEST_TIME:-}
+      FIELD_BYTES: ${FIELD_BYTES:-}
+    volumes:
+      - ../data/nginx-logs:/logs:ro             # written by step-1 nginx
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:9102/metrics',timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks: [stand]
+    logging: *default-logging
+
+  gt-annotator:
+    build: ./exporters
+    image: anomaly-stand-obs-exporters:local
+    command: ["python", "gt_annotator.py"]
+    environment:
+      GT_PATH: /ground-truth/anomalies.jsonl
+      EXPORTER_PORT: "9103"
+      GRAFANA_URL: http://grafana:3000
+      GRAFANA_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GRAFANA_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      POLL_INTERVAL_S: "5"
+      LOG_LEVEL: ${EXPORTER_LOG_LEVEL:-INFO}
+    volumes:
+      - ../data/ground-truth:/ground-truth:ro   # written by step-1 traffic-generator
+    depends_on:
+      grafana:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:9103/metrics',timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks: [stand]
+    logging: *default-logging

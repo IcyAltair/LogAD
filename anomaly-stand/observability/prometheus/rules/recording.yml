@@ -1,0 +1,53 @@
+# Recording rules = cheap, pre-aggregated "features" of the business layer.
+# They feed the dashboard and baseline alerts, and are the same aggregations
+# the Isolation Forest will compute from raw logs in step 3 (easy comparison).
+groups:
+  - name: stand-features-1m
+    interval: 5s
+    rules:
+      # --- traffic ---
+      - record: stand:requests:rate1m
+        expr: sum(rate(nginx_log_requests_total[1m]))
+
+      - record: stand:requests_by_route:rate1m
+        expr: sum by (route) (rate(nginx_log_requests_total[1m]))
+
+      - record: stand:requests_by_status_class:rate1m
+        expr: sum by (status_class) (rate(nginx_log_requests_total[1m]))
+
+      # --- errors (or vector(0) keeps the series alive when there are no errors) ---
+      - record: stand:errors_5xx:ratio1m
+        expr: |
+          (sum(rate(nginx_log_requests_total{status_class="5xx"}[1m])) or vector(0))
+          /
+          clamp_min(sum(rate(nginx_log_requests_total[1m])), 1e-9)
+
+      - record: stand:errors_4xx:ratio1m
+        expr: |
+          (sum(rate(nginx_log_requests_total{status_class="4xx"}[1m])) or vector(0))
+          /
+          clamp_min(sum(rate(nginx_log_requests_total[1m])), 1e-9)
+
+      # --- latency (nginx $request_time) ---
+      - record: stand:latency_p50_seconds:1m
+        expr: histogram_quantile(0.50, sum by (le) (rate(nginx_log_request_duration_seconds_bucket[1m])))
+      - record: stand:latency_p95_seconds:1m
+        expr: histogram_quantile(0.95, sum by (le) (rate(nginx_log_request_duration_seconds_bucket[1m])))
+      - record: stand:latency_p99_seconds:1m
+        expr: histogram_quantile(0.99, sum by (le) (rate(nginx_log_request_duration_seconds_bucket[1m])))
+
+      # --- payload (nginx $body_bytes_sent) ---
+      - record: stand:response_size_bytes:avg1m
+        expr: |
+          sum(rate(nginx_log_response_size_bytes_sum[1m]))
+          /
+          clamp_min(sum(rate(nginx_log_response_size_bytes_count[1m])), 1e-9)
+
+  # Slow baselines for relative (seasonality-tolerant) thresholds
+  - name: stand-baselines-30m
+    interval: 15s
+    rules:
+      - record: stand:requests:rate1m:avg30m
+        expr: avg_over_time(stand:requests:rate1m[30m])
+      - record: stand:response_size_bytes:avg1m:avg30m
+        expr: avg_over_time(stand:response_size_bytes:avg1m[30m])
