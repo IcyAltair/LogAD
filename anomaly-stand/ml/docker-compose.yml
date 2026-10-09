@@ -1,0 +1,81 @@
+# =============================================================================
+# Anomaly-detection stand — STEP 3: ML layer (Isolation Forest)
+#
+# Separate compose project attached to the network created by step 1.
+# Start steps 1 and 2 first, then (from anomaly-stand/ml):
+#     docker compose up -d --build            # online detector
+#     docker compose run --rm ml-trainer      # pipeline: prepare -> train -> test
+#
+#   ml-detector  tails the nginx JSON log, scores 15s windows, exposes :9200/metrics
+#                (scraped by step-2 Prometheus via prometheus/targets/ml-detector.yml)
+#   ml-trainer   one-shot training pipeline (profile "train", run on demand)
+# NOT a production setup.
+# =============================================================================
+name: anomaly-stand-ml
+
+x-logging: &default-logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
+# Settings shared by trainer and detector (must be identical for both!)
+x-ml-env: &ml-env
+  NGINX_LOG_FILE: /data/nginx-logs/access.json.log
+  GROUND_TRUTH_FILE: /data/ground-truth/anomalies.jsonl
+  ML_DATA_DIR: /data/ml
+  WINDOW_S: ${WINDOW_S:-15}
+  BASELINE_WINDOWS: ${BASELINE_WINDOWS:-40}
+  MIN_WINDOWS: ${MIN_WINDOWS:-200}
+  BLOCK_WINDOWS: ${BLOCK_WINDOWS:-40}
+  SPLIT_PATTERN: ${SPLIT_PATTERN:-train,train,train,val,test}
+  TRAIN_LOOKBACK_HOURS: ${TRAIN_LOOKBACK_HOURS:-0}
+  TRAIN_ON_CLEAN: ${TRAIN_ON_CLEAN:-true}
+  N_ESTIMATORS: ${N_ESTIMATORS:-200}
+  MAX_SAMPLES_GRID: ${MAX_SAMPLES_GRID:-128,256}
+  MAX_FEATURES_GRID: ${MAX_FEATURES_GRID:-1.0,0.5}
+  THRESHOLD_QUANTILE: ${THRESHOLD_QUANTILE:-0.995}
+  THRESHOLD_FLOOR_QUANTILE: ${THRESHOLD_FLOOR_QUANTILE:-0.95}
+  ALERT_K: ${ALERT_K:-2}
+  ALERT_N: ${ALERT_N:-3}
+  SEED: ${SEED:-42}
+  LOG_LEVEL: ${ML_LOG_LEVEL:-INFO}
+
+x-ml-common: &ml-common
+  build: .
+  image: anomaly-stand/ml:1.0
+  volumes:
+    - ../data/nginx-logs:/data/nginx-logs:ro        # written by step-1 nginx
+    - ../data/ground-truth:/data/ground-truth:ro    # written by step-1 traffic-generator
+    - ../data/ml:/data/ml                           # datasets, models, reports
+  networks: [stand]
+  logging: *default-logging
+
+networks:
+  stand:
+    name: anomaly-stand-net
+    external: true
+
+services:
+  ml-detector:
+    <<: *ml-common
+    container_name: anomaly-ml-detector
+    environment:
+      <<: *ml-env
+      AUTO_TRAIN: ${AUTO_TRAIN:-true}                     # train the first model automatically...
+      AUTO_TRAIN_MIN_SPAN_S: ${AUTO_TRAIN_MIN_SPAN_S:-3900} # ...when logs cover > 1 simulated day
+    command: ["uvicorn", "anomaly.detector:app", "--host", "0.0.0.0", "--port", "9200", "--workers", "1", "--no-access-log"]
+    ports:
+      - "${ML_PORT:-9200}:9200"                       # REST API for debugging
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:9200/health',timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  ml-trainer:
+    <<: *ml-common
+    environment: *ml-env
+    profiles: ["train"]                               # only via `docker compose run --rm ml-trainer`
+    command: ["python", "-m", "anomaly.pipeline", "run"]
+    restart: "no"
